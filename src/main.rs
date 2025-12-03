@@ -10,7 +10,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::time::timeout;
 
-const INACTIVITY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const INACTIVITY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -40,6 +40,7 @@ async fn main() -> std::io::Result<()> {
 
     // Создаем 2 сокета, один на прием от игрового клиента, второй на общение с игровым сервером
     let game_client_socket = Arc::new(UdpSocket::bind(bind_address).await?);
+    // адрес подключения надо отправить куда-то, чтобы клиент знал куда подключаться
     println!("Connect to local address: {:?}", game_client_socket);
     let game_client_socket_clone = game_client_socket.clone();
 
@@ -111,7 +112,10 @@ async fn main() -> std::io::Result<()> {
 
             match recv.await {
                 Ok(Some(_)) => {}
-                Ok(None) => break,
+                Ok(None) => {
+                    println!("Client inactive for too long, removing mapping");
+                    break;
+                }
                 Err(_) => {
                     println!("Client inactive for too long, removing mapping");
                     break;
