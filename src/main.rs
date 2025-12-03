@@ -7,6 +7,10 @@ use dashmap::DashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc::{Receiver, Sender, channel};
+use tokio::time::timeout;
+
+const INACTIVITY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -42,6 +46,9 @@ async fn main() -> std::io::Result<()> {
     let game_server_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
     let game_server_socket_clone = game_server_socket.clone();
 
+    let (tx, mut rx): (Sender<i32>, Receiver<i32>) = channel(100);
+    let tx_clone = tx.clone();
+
     let client_handler = tokio::spawn(async move {
         loop {
             let mut buf = buffer_pool.get_buffer().await;
@@ -58,7 +65,9 @@ async fn main() -> std::io::Result<()> {
                         .send_to(&buf[..len], server_address)
                         .await
                     {
-                        Ok(_) => {}
+                        Ok(_) => {
+                            tx.send(1).await.unwrap();
+                        }
                         Err(e) => {
                             println!("[game_server_socket] Error sending: {:?}", e);
                         }
@@ -82,7 +91,9 @@ async fn main() -> std::io::Result<()> {
                         .send_to(&buf[..len], *client_addr)
                         .await
                     {
-                        Ok(_) => {}
+                        Ok(_) => {
+                            tx_clone.send(1).await.unwrap();
+                        }
                         Err(e) => {
                             println!("[game_client_socket_clone] Error sending: {:?}", e);
                         }
@@ -94,9 +105,25 @@ async fn main() -> std::io::Result<()> {
         }
     });
 
+    let watchdog = tokio::spawn(async move {
+        loop {
+            let recv = timeout(INACTIVITY_TIMEOUT, rx.recv());
+
+            match recv.await {
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(_) => {
+                    println!("Client inactive for too long, removing mapping");
+                    break;
+                }
+            }
+        }
+    });
+
     tokio::select! {
         _ = client_handler => {},
         _ = server_handler => {},
+        _ = watchdog  => {},
     }
 
     Ok(())
